@@ -1,0 +1,1361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#161b21">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Schedule Editor</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<meta name="apple-mobile-web-app-title" content="Schedule Editor">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=Rationale&display=swap" rel="stylesheet">
+<style>
+  :root{
+    /* Depth ladder — each surface is measurably lighter than the one behind it:
+       dial (deepest) < page background < sheet < inputs inside the sheet */
+    --dial:#080b0e;
+    --bg:#161b21;
+    --panel:#232b34;
+    --panel-2:#2e3742;
+    --line:#3a4450; --text:#e8edf2; --muted:#9aa7b4; --accent:#22a7e0; --now:#e8324a;
+    --track:#2b343e;
+    /* dial internals */
+    --bezel:#0f141a; --bezel-edge:#2b333d; --spoke:#151c23; --ring-guide:#131920;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  /* iOS Safari gives <button> a native appearance that ignores flex
+     centering and clips text; strip it everywhere so our styles apply. */
+  button{-webkit-appearance:none;appearance:none}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg);color:var(--text);
+    font-family:"Inter",ui-sans-serif,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+    font-optical-sizing:auto;
+    font-size:15px;line-height:1.4;
+    padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  .wrap{max-width:520px;margin:0 auto;padding:0 0 96px}
+  .panes{display:block}
+  .pane-left,.pane-right{min-width:0}
+  .panehead{
+    font-size:12px;font-weight:600;color:var(--muted);letter-spacing:.6px;
+    text-transform:uppercase;padding:0 16px 8px;
+  }
+  .addinline{
+    width:34px;height:34px;border-radius:50%;border:0;cursor:pointer;flex:none;
+    background:var(--accent);color:#fff;font-size:21px;line-height:1;
+    display:grid;place-items:center;padding:0;
+  }
+  .addinline:hover{filter:brightness(1.1)}
+  .addinline:active{transform:scale(.94)}
+
+  /* ---- MID (iPad portrait, 700-1059): still one column, but the dial and
+     month get real room instead of sitting in a 520px phone strip.
+     Two columns below ~1060 would squeeze the dial smaller than this. ---- */
+  @media(min-width:700px) and (max-width:1059px){
+    .wrap{max-width:760px;padding-bottom:110px}
+    .panes{padding:0 12px}
+    svg.dial{max-width:640px;margin:0 auto}
+    .fab{right:max(24px, calc((100vw - 760px)/2 + 24px))}
+  }
+
+  /* ---- WIDE: dial on the left; month + activities stacked on the right.
+     The right pane is a fixed-height flex column: the calendar takes at most
+     half the window, and the list scrolls in whatever is left. ---- */
+  @media(min-width:1060px){
+    .wrap{max-width:1180px;padding-bottom:40px}
+    .panes{
+      display:grid;
+      grid-template-columns:minmax(0,1.3fr) minmax(300px,0.7fr);
+      gap:28px;align-items:start;padding:0 24px;
+    }
+    .pane-right{
+      position:sticky;top:76px;
+      height:calc(100vh - 104px);
+      display:flex;flex-direction:column;gap:14px;min-height:0;
+    }
+    #monthView{
+      flex:0 0 auto;max-height:50vh;overflow:hidden;
+      background:var(--panel);border:1px solid var(--line);border-radius:16px;
+      padding:12px 12px 10px;display:flex;flex-direction:column;min-height:0;
+    }
+    #monthView .cal{padding:0;flex:1 1 auto;min-height:0;overflow:hidden}
+    #monthView .calfoot{flex:0 0 auto;padding:8px 2px 0}
+    /* the day rings shrink to fit rather than overflowing the card */
+    #monthView .calgrid{min-height:0}
+
+    .listwrap{
+      flex:1 1 auto;min-height:0;display:flex;flex-direction:column;
+      background:var(--panel);border:1px solid var(--line);border-radius:16px;
+      padding:14px 0 0;overflow:hidden;
+    }
+    .panehead{
+      flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;
+      padding:0 14px 10px;
+    }
+    /* the list is the only thing that scrolls */
+    .listwrap .list{flex:1 1 auto;min-height:0;overflow-y:auto;margin-top:0}
+    .empty{border-top:0}
+    .dialwrap{padding:0 0 18px}
+    svg.dial{max-width:640px;margin:0 auto}
+    /* the + moves into the pane header, so the floating one goes away */
+    .fab{display:none}
+  }
+  @media(min-width:1280px){
+    .wrap{max-width:1320px}
+    svg.dial{max-width:700px}
+  }
+  header{
+    display:flex;align-items:center;gap:12px;padding:14px 16px;
+    position:sticky;top:0;z-index:20;background:var(--bg);border-bottom:1px solid var(--line);
+  }
+  header h1{font-size:20px;font-weight:600;margin:0;flex:1;letter-spacing:.2px}
+  .iconbtn{background:none;border:0;color:var(--text);cursor:pointer;width:38px;height:38px;border-radius:50%;display:grid;place-items:center;font-size:17px}
+  .iconbtn:hover{background:var(--panel-2)}
+  .iconbtn.on{color:var(--accent)}
+  .iconbtn.sync.busy{animation:spin 1s linear infinite}
+  .iconbtn.sync.err{color:var(--now)}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  .datenav{display:flex;align-items:center;justify-content:center;gap:8px;padding:16px 16px 4px}
+  .datenav .d{text-align:center;min-width:190px;cursor:pointer;border-radius:8px;padding:2px 6px}
+  .datenav .d:hover{background:var(--panel)}
+  .datenav .d b{display:block;font-size:19px;font-weight:600}
+  .datenav .d span{color:var(--muted);font-size:13px}
+  .navbtn{background:var(--panel-2);border:0;color:var(--text);cursor:pointer;width:40px;height:40px;border-radius:50%;font-size:16px;flex:none}
+  .navbtn:hover{background:#3a4450}
+  .dialwrap{padding:6px 16px 12px}
+  svg.dial{width:100%;height:auto;display:block;touch-action:none;user-select:none;-webkit-user-select:none;font-family:"Inter",ui-sans-serif,sans-serif}
+  .tick{stroke:#454f5b;stroke-width:1.2;stroke-linecap:round}
+  .tick.major{stroke:#9aa7b4;stroke-width:2}
+  .tick.major.t2{stroke:#b3bec9;stroke-width:2.2}
+  .tick.major.t1{stroke:#d4dde6;stroke-width:2.6}
+  .hournum{
+    font-family:"Rationale",ui-sans-serif,sans-serif;
+    fill:#cdd7e1;font-size:16px;font-weight:400;letter-spacing:.5px;
+    text-anchor:middle;dominant-baseline:central;
+  }
+  .hournum.q{fill:#f2f6fa;font-size:18px;font-weight:400}
+  .sector{cursor:grab}
+  .sector.dragging{cursor:grabbing}
+  .sector .body{transition:fill-opacity .12s}
+  .sector:hover .body{fill-opacity:1}
+  .sector.sel .body{stroke:#fff;stroke-width:2}
+  .handle{cursor:ew-resize;fill:#fff;fill-opacity:0;stroke:#fff;stroke-opacity:0;stroke-width:2;transition:fill-opacity .12s,stroke-opacity .12s}
+  .sector:hover .handle,.sector.sel .handle{fill-opacity:.95;stroke-opacity:.5}
+  .seclabel{font-family:"Inter",ui-sans-serif,sans-serif;font-size:10.5px;font-weight:600;letter-spacing:.3px;pointer-events:none}
+  .sectime{font-family:"Inter",ui-sans-serif,sans-serif;font-size:8px;font-weight:600;opacity:.92;pointer-events:none}
+  .hubface{fill:var(--accent)}
+  .hubtime{font-family:"Rationale",ui-sans-serif,sans-serif;fill:#fff;font-size:23px;font-weight:400;text-anchor:middle;dominant-baseline:central;letter-spacing:.5px}
+  .hubdate{font-family:"Rationale",ui-sans-serif,sans-serif;fill:rgba(255,255,255,.85);font-size:12px;font-weight:400;text-anchor:middle;dominant-baseline:central}
+  .nowhand{stroke:var(--now);stroke-width:3;stroke-linecap:round;pointer-events:none}
+  .nowdot{fill:var(--now);pointer-events:none}
+  .ghosttip{font-family:"Inter",ui-sans-serif,sans-serif;fill:#fff;font-size:11px;font-weight:700;text-anchor:middle;dominant-baseline:central;pointer-events:none}
+  .ghostbg{fill:#000;fill-opacity:.72;pointer-events:none}
+  .cal{padding:4px 12px 12px}
+  .calhead{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-bottom:6px}
+  .calhead div{text-align:center;font-size:11px;color:var(--muted);font-weight:600;letter-spacing:.4px}
+  .calgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:4px}
+  .cell{
+    position:relative;aspect-ratio:1;border-radius:50%;background:transparent;
+    border:0;cursor:pointer;padding:2px;display:grid;place-items:center;
+  }
+  .cell .mini{width:100%;height:100%;display:block;transition:transform .12s}
+  .cell:hover .mini{transform:scale(1.08)}
+  .cell.out{opacity:.4}
+  .cell.sel{background:rgba(34,167,224,.16)}
+  .mnum{font-family:"Rationale",ui-sans-serif,sans-serif;fill:#d4dde6;font-size:15px;font-weight:400}
+  .mnum.today{fill:var(--accent);font-weight:400}
+  .mnum.out{fill:#78848f}
+  .calfoot{display:flex;justify-content:space-between;align-items:center;padding:12px 16px 0;color:var(--muted);font-size:12.5px}
+  .calfoot b{color:var(--text);font-weight:600}
+  .list{margin-top:6px}
+  .empty{text-align:center;color:var(--muted);padding:34px 24px;font-size:14px;border-top:1px solid var(--line)}
+  .empty b{display:block;color:var(--text);font-weight:600;margin-bottom:4px;font-size:15px}
+  .row{display:flex;align-items:center;gap:14px;padding:12px 16px;border-bottom:1px solid rgba(42,50,59,.6);cursor:pointer}
+  .row:hover{background:var(--panel)}
+  .row.live{background:rgba(34,167,224,.09);box-shadow:inset 3px 0 0 var(--accent)}
+  .badge{width:40px;height:40px;border-radius:50%;flex:none;display:grid;place-items:center;font-weight:700;font-size:16px}
+  .row .meta{flex:1;min-width:0}
+  .row .meta b{display:block;font-weight:500;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .row .meta span{color:var(--muted);font-size:12.5px}
+  .row .meta span em{color:#c2ccd6;font-style:normal;font-weight:600;margin-right:6px}
+  .rep{color:var(--muted);font-size:12px;flex:none;opacity:.75}
+  .inforow{
+    display:flex;gap:12px;padding:9px 0;border-bottom:1px solid var(--line);
+    font-size:14px;align-items:baseline;
+  }
+  .inforow span{color:var(--muted);flex:0 0 66px;font-size:12px}
+  .inforow b{color:var(--text);font-weight:500;flex:1;min-width:0}
+  .infonote{
+    color:var(--muted);font-size:12.5px;line-height:1.5;
+    margin-top:14px;padding:11px 12px;background:var(--panel-2);border-radius:10px;
+  }
+  .kebab{color:var(--muted);font-size:18px;padding:0 4px;flex:none}
+  .fab{
+    position:fixed;right:max(20px,calc((100vw - 520px)/2 + 20px));
+    bottom:calc(24px + env(safe-area-inset-bottom));
+    width:58px;height:58px;border-radius:50%;border:0;cursor:pointer;
+    background:var(--accent);color:#fff;font-size:30px;line-height:1;
+    box-shadow:0 6px 20px rgba(0,0,0,.45);z-index:30;
+  }
+  .fab:active{transform:scale(.94)}
+  @media(min-width:1060px){
+    .fab{
+      right:32px;
+      bottom:32px;
+    }
+  }
+  .scrim{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:40;display:none;align-items:flex-end;justify-content:center}
+  .scrim.open{display:flex}
+  .sheet{
+    background:var(--panel);width:100%;max-width:min(520px,100vw);border-radius:20px 20px 0 0;
+    padding:20px 16px calc(24px + env(safe-area-inset-bottom));max-height:88vh;
+    overflow-y:auto;overflow-x:hidden;
+  }
+  /* every direct child may shrink; without this a wide row forces the sheet open */
+  .sheet > *{min-width:0;max-width:100%}
+  @media(min-width:560px){
+    .scrim{align-items:center}
+    .sheet{border-radius:20px;max-height:84vh;padding-left:20px;padding-right:20px}
+  }
+  /* Wide: the editor floats centered over both columns, wide enough that
+     the time row and the 12 swatches sit comfortably on one line each. */
+  @media(min-width:1060px){
+    .sheet{
+      max-width:620px;max-height:86vh;padding:24px;
+      box-shadow:0 24px 60px rgba(0,0,0,.55);
+      border:1px solid var(--line);
+    }
+    .scrim{background:rgba(0,0,0,.66)}
+  }
+  .sheet h2{margin:0 0 16px;font-size:17px;font-weight:600}
+  label{display:block;font-size:12px;color:var(--muted);margin:0 0 6px;font-weight:500}
+  input[type=text],input[type=time],input[type=number],input[type=password],input[type=date],select,textarea{
+    width:100%;min-width:0;max-width:100%;background:var(--panel-2);border:1px solid var(--line);color:var(--text);
+    border-radius:10px;padding:11px 10px;font-size:15px;font-family:inherit;
+  }
+  /* Safari gives date/time inputs an intrinsic min-content width from their
+     native picker chrome, which ignores width:100% and forces the whole sheet
+     wider than the viewport. Stripping the appearance lets them shrink. */
+  input[type=date],input[type=time]{
+    -webkit-appearance:none;appearance:none;
+    min-width:0;max-width:100%;box-sizing:border-box;
+  }
+  input[type=date]::-webkit-date-and-time-value{
+    text-align:left;margin:0;min-width:0;
+  }
+  input[type=date]::-webkit-calendar-picker-indicator,
+  input[type=time]::-webkit-calendar-picker-indicator{
+    margin-left:0;padding:0;opacity:.55;
+  }
+  textarea{resize:vertical;min-height:56px;line-height:1.45}
+  input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:0;border-color:transparent}
+  .opt-tag{
+    color:var(--muted);font-weight:400;text-transform:none;letter-spacing:0;
+    font-size:11px;opacity:.8;
+  }
+  .rownote{
+    color:var(--muted);font-size:12px;margin-top:2px;
+    display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden;
+  }
+  .field{margin-bottom:14px;min-width:0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+  .grid2 > *,.grid3 > *{min-width:0}
+  /* Ends is derived from Starts + Minutes, so it's the one to drop when space is tight */
+  @media(max-width:400px){
+    .grid3{grid-template-columns:1fr 1fr}
+    .grid3 .field.opt{grid-column:1 / -1}
+  }
+  /* 6 x 2 — the circle is drawn ~15% smaller than the cell, but the button
+     keeps its full size so the tap target stays above Apple's 44px minimum. */
+  .swatches{display:grid;grid-template-columns:repeat(6,1fr);gap:8px}
+  .sw{
+    aspect-ratio:1;width:100%;height:auto;border:0;background:none;padding:0;
+    cursor:pointer;min-width:0;display:grid;place-items:center;
+  }
+  .sw i{
+    display:block;width:82%;height:82%;border-radius:50%;
+    background:var(--c);border:2px solid transparent;
+    transition:transform .1s,border-color .1s;
+  }
+  .sw[aria-checked=true] i{border-color:#fff;transform:scale(1.1)}
+  .sw:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:50%}
+  .actions{display:flex;gap:8px;margin-top:20px}
+  .btn{
+    flex:1 1 0;min-width:0;padding:12px 8px;border-radius:10px;border:0;
+    font-size:15px;font-weight:600;line-height:1.4;cursor:pointer;font-family:inherit;
+    display:flex;align-items:center;justify-content:center;
+    -webkit-box-align:center;-webkit-box-pack:center;
+  }
+  /* clip only when buttons sit side by side (edit sheet); a vertical stack
+     has room for full labels and must not shave glyph tops/bottoms */
+  .actions:not([style*="column"]) .btn{
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  }
+  .actions[style*="column"] .btn{min-height:46px}
+  .btn.primary{background:var(--accent);color:#fff}
+  .btn.ghost{background:var(--panel-2);color:var(--text)}
+  .btn.danger{background:rgba(232,50,74,.14);color:#ff6b7e;flex:0 1 auto;padding:12px 14px}
+  .hint{font-size:12px;color:var(--muted);line-height:1.5;margin:10px 0 0}
+  .hint a{color:var(--accent)}
+  .status{font-size:12px;color:var(--muted);padding:0 16px 8px;text-align:center;min-height:16px}
+  .status.err{color:#ff6b7e}
+  code{background:var(--panel-2);padding:1px 5px;border-radius:4px;font-size:12px}
+  .fieldset{
+    border:1px solid var(--line);border-radius:12px;padding:14px 12px;margin-bottom:14px;
+    min-width:0;max-width:100%;overflow:hidden;
+  }
+  .fieldset > *{min-width:0;max-width:100%}
+  .fieldset legend{padding:0 6px;font-size:12px;color:var(--muted);font-weight:600}
+  .freqs{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+  .chip{
+    background:var(--panel-2);border:1px solid var(--line);color:var(--muted);
+    border-radius:999px;padding:7px 12px;font-size:13px;cursor:pointer;font-family:inherit;font-weight:500;
+  }
+  .chip[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:#fff}
+  .dow[aria-pressed=true]{background:var(--accent);border-color:var(--accent);color:#fff}
+  .radioline{display:flex;align-items:center;gap:9px;margin-bottom:9px;font-size:14px;flex-wrap:wrap}
+  .radioline input[type=radio]{accent-color:var(--accent);width:17px;height:17px;flex:none;margin:0}
+  .radioline label{margin:0;color:var(--text);font-size:14px;font-weight:400;white-space:nowrap}
+  .radioline input[type=number]{width:72px;flex:none}
+  .radioline input[type=date]{flex:1 1 110px;min-width:0;max-width:100%}
+  /* Below ~380px the End-by row runs out of room; let the date take its own line */
+  @media(max-width:379px){
+    .radioline input[type=date]{flex:1 0 100%;margin-top:2px}
+  }
+  .inline{display:flex;align-items:center;gap:9px;font-size:14px;flex-wrap:wrap}
+  .inline input[type=number]{width:66px;flex:none}
+  .dows{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin-top:10px}
+  .dow{
+    background:var(--panel-2);border:1px solid var(--line);color:var(--muted);
+    border-radius:8px;padding:9px 0;font-size:11.5px;font-weight:600;cursor:pointer;
+    font-family:inherit;text-align:center;min-width:0;overflow:hidden;
+  }
+  .subtle{color:var(--muted);font-size:12.5px;margin:10px 0 0;line-height:1.5}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1 style="flex:none">Editor</h1>
+    <select id="coursePick" style="flex:1;max-width:200px;background:var(--panel-2);color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px 10px;font-family:inherit;font-size:14px;font-weight:600"></select>
+    <button class="iconbtn" id="viewBtn" title="Switch between day and month">&#128197;</button>
+    <button class="iconbtn sync" id="syncBtn" title="Save to this course's schedule">&#8635;</button>
+    <button class="iconbtn" id="cfgBtn" title="GitHub token">&#9881;</button>
+  </header>
+  <div class="datenav">
+    <button class="navbtn" id="prevBtn" aria-label="Previous">&#8249;</button>
+    <div class="d" id="todayJump" title="Jump to today"><b id="dLong">-</b><span id="dWeek">-</span></div>
+    <button class="navbtn" id="nextBtn" aria-label="Next">&#8250;</button>
+  </div>
+  <div class="status" id="status"></div>
+  <div class="panes">
+    <!-- LEFT: the dial -->
+    <div class="pane-left">
+      <div id="dayView">
+        <div class="dialwrap">
+          <svg class="dial" id="dial" viewBox="0 0 400 400" xmlns="http://www.w3.org/2000/svg"></svg>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: month calendar on top, activities scrolling beneath -->
+    <div class="pane-right">
+      <div id="monthView" hidden>
+        <div class="cal">
+          <div class="calhead" id="calHead"></div>
+          <div class="calgrid" id="calGrid"></div>
+        </div>
+        <div class="calfoot">
+          <span>Planned this month: <b id="mTotal">-</b></span>
+          <span><b id="mDays">-</b> days with activities</span>
+        </div>
+      </div>
+      <div class="listwrap">
+        <div class="panehead" id="listHead" hidden>
+          <span>Activities</span>
+          <button class="addinline" id="addInline" aria-label="Add activity" title="Add activity">+</button>
+        </div>
+        <div class="list" id="list"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<button class="fab" id="addBtn" aria-label="Add activity">+</button>
+
+<div class="scrim" id="evScrim">
+  <div class="sheet" role="dialog" aria-modal="true">
+    <h2 id="evTitle">New activity</h2>
+    <div class="field">
+      <label for="fLabel">Name</label>
+      <input type="text" id="fLabel" placeholder="Project work" autocomplete="off">
+    </div>
+    <div class="field">
+      <label for="fNote">Description <span class="opt-tag">optional</span></label>
+      <textarea id="fNote" rows="2" placeholder="Anything worth remembering about this block"></textarea>
+    </div>
+    <div class="grid3">
+      <div class="field">
+        <label for="fStart">Starts</label>
+        <input type="time" id="fStart" step="300">
+      </div>
+      <div class="field opt">
+        <label for="fEnd">Ends</label>
+        <input type="time" id="fEnd" step="300">
+      </div>
+      <div class="field">
+        <label for="fDur">Minutes</label>
+        <input type="number" id="fDur" min="5" max="1440" step="5" value="60">
+      </div>
+    </div>
+    <div class="field">
+      <label for="fRing">Ring</label>
+      <select id="fRing">
+        <option value="0">Outer ring</option>
+        <option value="1">Middle ring</option>
+        <option value="2">Inner ring</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Color</label>
+      <div class="swatches" id="fColors"></div>
+    </div>
+    <fieldset class="fieldset">
+      <legend>Repeat</legend>
+      <div class="freqs" id="fFreq">
+        <button class="chip" data-f="none" aria-pressed="true">Doesn't repeat</button>
+        <button class="chip" data-f="daily" aria-pressed="false">Daily</button>
+        <button class="chip" data-f="weekly" aria-pressed="false">Weekly</button>
+        <button class="chip" data-f="monthly" aria-pressed="false">Monthly</button>
+        <button class="chip" data-f="yearly" aria-pressed="false">Yearly</button>
+      </div>
+      <div id="recBody" hidden>
+        <div class="inline">
+          <span>Repeat every</span>
+          <input type="number" id="fEvery" min="1" max="99" value="1">
+          <span id="fEveryUnit">week(s)</span>
+        </div>
+        <div id="dowWrap">
+          <div class="dows" id="fDows">
+            <button class="dow" data-d="0" aria-pressed="false">Sun</button>
+            <button class="dow" data-d="1" aria-pressed="false">Mon</button>
+            <button class="dow" data-d="2" aria-pressed="false">Tue</button>
+            <button class="dow" data-d="3" aria-pressed="false">Wed</button>
+            <button class="dow" data-d="4" aria-pressed="false">Thu</button>
+            <button class="dow" data-d="5" aria-pressed="false">Fri</button>
+            <button class="dow" data-d="6" aria-pressed="false">Sat</button>
+          </div>
+        </div>
+        <div class="field" style="margin-top:14px">
+          <label for="fFrom">Starts on</label>
+          <input type="date" id="fFrom">
+        </div>
+        <label style="margin-bottom:8px">Ends</label>
+        <div class="radioline">
+          <input type="radio" name="recEnd" id="rNever" value="never" checked>
+          <label for="rNever">No end date</label>
+        </div>
+        <div class="radioline">
+          <input type="radio" name="recEnd" id="rCount" value="count">
+          <label for="rCount">End after</label>
+          <input type="number" id="fCount" min="1" max="999" value="10" disabled>
+          <label for="fCount">times</label>
+        </div>
+        <div class="radioline">
+          <input type="radio" name="recEnd" id="rUntil" value="until">
+          <label for="rUntil">End by</label>
+          <input type="date" id="fUntil" disabled>
+        </div>
+        <p class="subtle" id="recSummary"></p>
+      </div>
+    </fieldset>
+    <div class="actions">
+      <button class="btn danger" id="evDelete" hidden>Delete</button>
+      <button class="btn ghost" id="evCancel">Cancel</button>
+      <button class="btn primary" id="evSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="scrim" id="scopeScrim">
+  <div class="sheet" role="dialog" aria-modal="true">
+    <h2 id="scopeTitle">This activity repeats</h2>
+    <p class="subtle" id="scopeMsg" style="margin-top:0"></p>
+    <div class="actions" style="flex-direction:column">
+      <button class="btn primary" id="scopeOne">Just this day</button>
+      <button class="btn ghost" id="scopeAll">Every occurrence</button>
+      <button class="btn ghost" id="scopeCancel">Cancel</button>
+    </div>
+  </div>
+</div>
+
+
+<div class="scrim" id="cfgScrim">
+  <div class="sheet" role="dialog" aria-modal="true">
+    <h2>GitHub token</h2>
+    <div class="field">
+      <label for="fToken">Token (Gists: read and write)</label>
+      <input type="password" id="fToken" placeholder="github_pat_..." autocomplete="off" spellcheck="false">
+    </div>
+    <p class="hint">
+      Make a fine-grained token with <b>Gists: read and write</b> at
+      <a href="https://github.com/settings/tokens" target="_blank" rel="noopener">github.com/settings/tokens</a>.
+      It stays on this device only and lets you save changes to whichever course is
+      selected above. Each course's schedule lives in its own gist, set in the code.
+    </p>
+    <div class="actions">
+      <button class="btn ghost" id="cfgCancel">Cancel</button>
+      <button class="btn primary" id="cfgSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+/* 12 colors ordered around the wheel, so the swatch row reads as a spectrum.
+   The original 9 keep their exact hex values — existing activities never shift. */
+var PALETTE = [
+  {name:"Cyan",   hex:"#22a7e0"},
+  {name:"Blue",   hex:"#3d7ff2"},
+  {name:"Violet", hex:"#8b6ee0"},
+  {name:"Rose",   hex:"#e8437a"},
+  {name:"Red",    hex:"#e2483f"},
+  {name:"Rust",   hex:"#b5533a"},
+  {name:"Orange", hex:"#f2683c"},
+  {name:"Amber",  hex:"#e8a33d"},
+  {name:"Yellow", hex:"#d9c53f"},
+  {name:"Green",  hex:"#2fb344"},
+  {name:"Teal",   hex:"#3ddc97"},
+  {name:"Slate",  hex:"#7b8b9a"}
+];
+var CX=200, CY=200;
+var R_OUTER=192, R_NUM=183, R_TICK_OUT=166, R_TICK_IN=158;
+var R_FACE=152, R_HUB=50;
+var SNAP=5, MIN_DUR=5, DAY=1440;
+var RINGS = [ {in:118,out:150}, {in:86,out:114}, {in:56,out:82} ];
+var DOW = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+
+var LS_DATA="sectograph.course.data.v3";
+var LS_TOKEN="sectograph.course.token";
+var GIST_FILE="sectograph.json";
+
+/* ============================================================
+   EDITOR — one place to manage every course schedule.
+   Add a course by giving it a label and its PUBLIC gist id.
+   Your GitHub token (Gists read+write) is entered once in the
+   gear menu and stored only in THIS browser. Never in this file.
+   ============================================================ */
+var COURSES = [
+  { id:"apbio",  label:"AP Biology",     gist:"6f9032d84dd05807419ba17acc601296"  },
+  { id:"ibbio",  label:"IB Biology",     gist:"192a95d991be5b63264c57445b8fa561"  },
+  { id:"moodle", label:"Course Planner", gist:"__MOODLE_GIST__" }
+];
+
+var state = { events:[], view:"day", viewDate:startOfToday(), calMonth:startOfToday(), selected:null, editing:null };
+var cfg = { gistId: "", token: localStorage.getItem(LS_TOKEN)||"" };
+var chosenColor = PALETTE[0].hex;
+var form = { freq:"none", days:[] };
+var drag = null, suppressClick=false, pendingScope=null;
+
+function startOfToday(){ var d=new Date(); d.setHours(0,0,0,0); return d; }
+function pad(n){ return (n<10?"0":"")+n; }
+function dayKey(d){ return d.getFullYear()+"-"+pad(d.getMonth()+1)+"-"+pad(d.getDate()); }
+function parseKey(k){ var p=String(k).split("-"); return new Date(+p[0], (+p[1])-1, +p[2]); }
+function addDays(d,n){ var x=new Date(d.getTime()); x.setDate(x.getDate()+n); return x; }
+function addMonths(d,n){ return new Date(d.getFullYear(), d.getMonth()+n, 1); }
+function isSameDay(a,b){ return dayKey(a)===dayKey(b); }
+function daysBetween(a,b){ return Math.round((parseKey(dayKey(b)) - parseKey(dayKey(a)))/86400000); }
+function monthsBetween(a,b){ return (b.getFullYear()-a.getFullYear())*12 + (b.getMonth()-a.getMonth()); }
+function hmToMin(hm){ var p=String(hm||"0:00").split(":"); return (parseInt(p[0],10)||0)*60 + (parseInt(p[1],10)||0); }
+function minToHM(m){ m=((m%DAY)+DAY)%DAY; return pad(Math.floor(m/60))+":"+pad(m%60); }
+function fmtDur(m){ var h=Math.floor(m/60), mm=m%60, o=""; if(h)o+=h+"h. "; if(mm||!h)o+=mm+"m."; return o.trim(); }
+function snap(m){ return Math.round(m/SNAP)*SNAP; }
+function uid(){ return Math.random().toString(36).slice(2,10); }
+function circDelta(from,to){ var d=to-from; while(d>DAY/2)d-=DAY; while(d<-DAY/2)d+=DAY; return d; }
+
+function occursOn(ev, date){
+  var r = ev.rule || {freq:"none", from: ev.from};
+  var key = dayKey(date);
+  if(ev.exdates && ev.exdates.indexOf(key)>=0) return false;
+  if(r.freq==="none") return r.from===key;
+  var start = parseKey(r.from);
+  if(date < start) return false;
+  if(r.until && key > r.until) return false;
+  var every = Math.max(1, r.every||1), idx=0;
+  if(r.freq==="daily"){
+    var dd = daysBetween(start,date);
+    if(dd<0 || dd%every!==0) return false;
+    idx = dd/every;
+  } else if(r.freq==="weekly"){
+    var days = (r.days && r.days.length) ? r.days : [start.getDay()];
+    if(days.indexOf(date.getDay())<0) return false;
+    var startSun = addDays(start, -start.getDay());
+    var wk = Math.floor(daysBetween(startSun,date)/7);
+    if(wk<0 || wk%every!==0) return false;
+    if(r.count){
+      idx=0;
+      for(var d=new Date(start); d<=date; d=addDays(d,1)){
+        var w=Math.floor(daysBetween(startSun,d)/7);
+        if(w%every===0 && days.indexOf(d.getDay())>=0){
+          if(isSameDay(d,date)) break;
+          idx++;
+        }
+      }
+    }
+  } else if(r.freq==="monthly"){
+    if(date.getDate()!==start.getDate()) return false;
+    var mm = monthsBetween(start,date);
+    if(mm<0 || mm%every!==0) return false;
+    idx = mm/every;
+  } else if(r.freq==="yearly"){
+    if(date.getDate()!==start.getDate() || date.getMonth()!==start.getMonth()) return false;
+    var yy = date.getFullYear()-start.getFullYear();
+    if(yy<0 || yy%every!==0) return false;
+    idx = yy/every;
+  } else return false;
+  if(r.count && idx >= r.count) return false;
+  return true;
+}
+
+function eventsFor(date){
+  var key = dayKey(date);
+  var out = [];
+  state.events.forEach(function(ev){
+    if(!occursOn(ev, date)) return;
+    var o = (ev.overrides && ev.overrides[key]) || {};
+    out.push({
+      id: ev.id, key: key,
+      label: o.label !== undefined ? o.label : ev.label,
+      note: o.note !== undefined ? o.note : (ev.note||""),
+      start: o.start !== undefined ? o.start : ev.start,
+      durationMin: o.durationMin !== undefined ? o.durationMin : ev.durationMin,
+      color: o.color !== undefined ? o.color : ev.color,
+      ring: o.ring !== undefined ? o.ring : (ev.ring||0),
+      repeats: !!(ev.rule && ev.rule.freq !== "none")
+    });
+  });
+  return out.sort(function(a,b){ return hmToMin(a.start)-hmToMin(b.start); });
+}
+function baseEvent(id){ return state.events.filter(function(e){ return e.id===id; })[0]; }
+function minutesOn(date){ return eventsFor(date).reduce(function(s,e){ return s+e.durationMin; },0); }
+
+function ruleText(r){
+  if(!r || r.freq==="none") return "";
+  var every=Math.max(1,r.every||1), s="";
+  if(r.freq==="daily") s = every===1 ? "Every day" : "Every "+every+" days";
+  if(r.freq==="weekly"){
+    var ds=(r.days||[]).slice().sort().map(function(d){return DOW[d];}).join(", ");
+    s = (every===1 ? "Weekly" : "Every "+every+" weeks") + (ds ? " on "+ds : "");
+  }
+  if(r.freq==="monthly") s = (every===1?"Monthly":"Every "+every+" months")+" on day "+parseKey(r.from).getDate();
+  if(r.freq==="yearly") s = every===1 ? "Every year" : "Every "+every+" years";
+  if(r.count) s += ", "+r.count+" times";
+  else if(r.until) s += ", until "+r.until;
+  return s;
+}
+
+function minToAngle(m){ return (((m%DAY)+DAY)%DAY)/DAY*360 - 90; }
+function angleToMin(deg){ var m=((deg+90)/360)*DAY; return ((m%DAY)+DAY)%DAY; }
+function polar(r,deg){ var a=deg*Math.PI/180; return [CX+r*Math.cos(a), CY+r*Math.sin(a)]; }
+function sectorPath(startMin,durMin,rIn,rOut){
+  var span = Math.min(durMin, DAY-0.1)/DAY*360;
+  var a0=minToAngle(startMin), a1=a0+span, large = span>180?1:0;
+  var p1=polar(rOut,a0), p2=polar(rOut,a1), p3=polar(rIn,a1), p4=polar(rIn,a0);
+  return "M"+p1[0].toFixed(2)+","+p1[1].toFixed(2)+
+         "A"+rOut+","+rOut+" 0 "+large+" 1 "+p2[0].toFixed(2)+","+p2[1].toFixed(2)+
+         "L"+p3[0].toFixed(2)+","+p3[1].toFixed(2)+
+         "A"+rIn+","+rIn+" 0 "+large+" 0 "+p4[0].toFixed(2)+","+p4[1].toFixed(2)+"Z";
+}
+function sectorTextTransform(s,d,r){
+  var mid=minToAngle(s+d/2), p=polar(r,mid), rot=mid+90;
+  if(rot>90 && rot<270) rot-=180;
+  return "translate("+p[0].toFixed(2)+","+p[1].toFixed(2)+") rotate("+rot.toFixed(2)+")";
+}
+function edgeTextTransform(at,r){
+  var a=minToAngle(at), p=polar(r,a), rot=a;
+  if(rot>90 && rot<270) rot-=180;
+  return "translate("+p[0].toFixed(2)+","+p[1].toFixed(2)+") rotate("+rot.toFixed(2)+")";
+}
+function esc(s){
+  return String(s).replace(/[&<>"']/g,function(c){
+    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];
+  });
+}
+function contrastOn(hex){
+  var r=parseInt(hex.slice(1,3),16), g=parseInt(hex.slice(3,5),16), b=parseInt(hex.slice(5,7),16);
+  return (0.299*r+0.587*g+0.114*b) > 150 ? "#0b0f12" : "#ffffff";
+}
+
+function renderDial(){
+  var now=new Date(), showLive=isSameDay(state.viewDate,now);
+  var nowMin=now.getHours()*60+now.getMinutes()+now.getSeconds()/60;
+  var evs=eventsFor(state.viewDate), s=[];
+  s.push('<circle cx="200" cy="200" r="'+R_OUTER+'" fill="var(--bezel)" stroke="var(--bezel-edge)" stroke-width="1"/>');
+  for(var i=0;i<96;i++){
+    var ang=i*(360/96)-90;
+    var hr = i/4;                        // whole number on hour ticks
+    var isHour = (i%4===0);
+    var inner, cls;
+    if(!isHour){
+      // quarter-hour lines — unchanged
+      inner = R_TICK_IN+5; cls = "tick";
+    } else if(hr%6===0){
+      // 0, 6, 12, 18 — longest
+      inner = 152; cls = "tick major t1";
+    } else if(hr%3===0){
+      // 3, 9, 15, 21 — medium, shorter than the quarter-day marks
+      inner = 155; cls = "tick major t2";
+    } else {
+      // every other hour — current length
+      inner = R_TICK_IN; cls = "tick major";
+    }
+    var outR = isHour ? R_TICK_OUT+4 : R_TICK_OUT;
+    var o=polar(outR,ang), n=polar(inner,ang);
+    s.push('<line class="'+cls+'" x1="'+o[0].toFixed(1)+'" y1="'+o[1].toFixed(1)+
+           '" x2="'+n[0].toFixed(1)+'" y2="'+n[1].toFixed(1)+'"/>');
+  }
+  // numerals only at the eight principal hours
+  for(var h=0;h<24;h+=3){
+    var a=h*15-90, pn=polar(R_NUM,a);
+    s.push('<text class="hournum'+(h%6===0?' q':'')+'" x="'+pn[0].toFixed(1)+'" y="'+pn[1].toFixed(1)+'">'+h+'</text>');
+  }
+  s.push('<circle cx="200" cy="200" r="'+R_FACE+'" fill="var(--dial)"/>');
+  for(var k=0;k<12;k++){
+    var sa=k*30-90, a1p=polar(R_HUB+4,sa), a2p=polar(R_FACE-2,sa);
+    s.push('<line x1="'+a1p[0].toFixed(1)+'" y1="'+a1p[1].toFixed(1)+'" x2="'+a2p[0].toFixed(1)+
+           '" y2="'+a2p[1].toFixed(1)+'" stroke="var(--spoke)" stroke-width="1"/>');
+  }
+  RINGS.forEach(function(r){
+    s.push('<circle cx="200" cy="200" r="'+r.out+'" fill="none" stroke="var(--ring-guide)" stroke-width="1"/>');
+  });
+  evs.forEach(function(ev){
+    var st=hmToMin(ev.start), du=Math.max(MIN_DUR,ev.durationMin);
+    var R=RINGS[Math.min(RINGS.length-1, ev.ring||0)];
+    var fg=contrastOn(ev.color), sel=state.selected===ev.id;
+    s.push('<g class="sector'+(sel?" sel":"")+'" data-id="'+ev.id+'">');
+    s.push('<path class="body" d="'+sectorPath(st,du,R.in,R.out)+'" fill="'+ev.color+
+           '" fill-opacity=".92" stroke="'+ev.color+'" stroke-width="1"/>');
+    var span=Math.min(du,DAY)/DAY*360, rMid=R.in+(R.out-R.in)*0.55;
+    if(span>=12 && (R.out-R.in)>=24){
+      var maxCh=Math.max(3, Math.floor(span/2.4));
+      var lbl = ev.label.length>maxCh ? ev.label.slice(0,maxCh-1)+"\u2026" : ev.label;
+      s.push('<text class="seclabel" fill="'+fg+'" text-anchor="middle" dominant-baseline="central" transform="'+
+             sectorTextTransform(st,du,rMid)+'">'+esc(lbl)+'</text>');
+    }
+    if(span>=8){
+      s.push('<text class="sectime" fill="'+fg+'" text-anchor="start" dominant-baseline="central" transform="'+
+             edgeTextTransform(st,R.in+7)+'">'+esc(ev.start)+'</text>');
+      s.push('<text class="sectime" fill="'+fg+'" text-anchor="end" dominant-baseline="central" transform="'+
+             edgeTextTransform(st+du,R.out-7)+'">'+esc(minToHM(st+du))+'</text>');
+    }
+    var hs=polar(rMid,minToAngle(st)), he=polar(rMid,minToAngle(st+du));
+    s.push('<circle class="handle" data-mode="start" cx="'+hs[0].toFixed(1)+'" cy="'+hs[1].toFixed(1)+'" r="6"/>');
+    s.push('<circle class="handle" data-mode="end" cx="'+he[0].toFixed(1)+'" cy="'+he[1].toFixed(1)+'" r="6"/>');
+    s.push('</g>');
+  });
+  if(showLive){
+    var na=minToAngle(nowMin), tip=polar(R_FACE-4,na), tail=polar(R_HUB+2,na), dot=polar(R_FACE+12,na);
+    s.push('<line class="nowhand" x1="'+tail[0].toFixed(1)+'" y1="'+tail[1].toFixed(1)+
+           '" x2="'+tip[0].toFixed(1)+'" y2="'+tip[1].toFixed(1)+'"/>');
+    s.push('<circle class="nowdot" cx="'+dot[0].toFixed(1)+'" cy="'+dot[1].toFixed(1)+'" r="5.5"/>');
+  }
+  var hubTime = showLive ? pad(now.getHours())+":"+pad(now.getMinutes()) : "--:--";
+  var hubDate = state.viewDate.toLocaleDateString(undefined,{weekday:"short"}).toLowerCase()+" "+state.viewDate.getDate();
+  s.push('<circle cx="200" cy="200" r="'+R_HUB+'" fill="var(--dial)" stroke="var(--dial)" stroke-width="6"/>');
+  s.push('<circle cx="200" cy="200" r="'+(R_HUB-4)+'" class="hubface"/>');
+  s.push('<text class="hubtime" x="200" y="193">'+hubTime+'</text>');
+  s.push('<text class="hubdate" x="200" y="212">'+esc(hubDate)+'</text>');
+  if(drag && drag.moved){
+    var d0 = eventsFor(state.viewDate).filter(function(x){return x.id===drag.id;})[0];
+    if(d0){
+      var t = d0.start+" \u2013 "+minToHM(hmToMin(d0.start)+d0.durationMin);
+      s.push('<rect class="ghostbg" x="128" y="330" width="144" height="26" rx="13"/>');
+      s.push('<text class="ghosttip" x="200" y="343">'+esc(t)+'  \u00b7  '+esc(fmtDur(d0.durationMin))+'</text>');
+    }
+  }
+  document.getElementById("dial").innerHTML = s.join("");
+}
+
+/* Thin progress-style ring with the day number inside.
+   Arcs are stroked, not filled, so the number stays readable. */
+function miniDial(date, isToday, isSel, inMonth){
+  var evs = eventsFor(date);
+  var R = 15.5, W = 3.2;
+  var s = '<svg class="mini" viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg">';
+  // track
+  s += '<circle cx="20" cy="20" r="'+R+'" fill="none" stroke="var(--track)" stroke-width="'+W+'"/>';
+  var C = 2*Math.PI*R;
+  evs.forEach(function(ev){
+    var st=hmToMin(ev.start), du=Math.max(MIN_DUR,ev.durationMin);
+    var frac = Math.min(du, DAY)/DAY;
+    var len = frac*C;
+    // rotate so the arc starts at its own start time; -90 puts 00:00 at the top
+    var rot = (st%DAY)/DAY*360 - 90;
+    s += '<circle cx="20" cy="20" r="'+R+'" fill="none" stroke="'+ev.color+'"'+
+         ' stroke-width="'+W+'" stroke-linecap="butt"'+
+         ' stroke-dasharray="'+len.toFixed(2)+' '+(C-len).toFixed(2)+'"'+
+         ' transform="rotate('+rot.toFixed(2)+' 20 20)"/>';
+  });
+  var cls = "mnum" + (isToday?" today":"") + (inMonth?"":" out");
+  s += '<text class="'+cls+'" x="20" y="20.5" text-anchor="middle" dominant-baseline="central">'+
+       date.getDate()+'</text>';
+  s += '</svg>';
+  return s;
+}
+
+function renderMonth(){
+  document.getElementById("calHead").innerHTML =
+    DOW.map(function(d){ return "<div>"+d.charAt(0)+"</div>"; }).join("");
+  var first = new Date(state.calMonth.getFullYear(), state.calMonth.getMonth(), 1);
+  var gridStart = addDays(first, -first.getDay());
+  var today = startOfToday();
+  var cells=[], totalMin=0, activeDays=0;
+  var weeks = 6;
+  // drop a trailing all-outside week so short months don't show a dead row
+  if(addDays(gridStart, 35).getMonth() !== state.calMonth.getMonth()) weeks = 5;
+
+  for(var i=0;i<weeks*7;i++){
+    var d = addDays(gridStart, i);
+    var inMonth = d.getMonth()===state.calMonth.getMonth();
+    var mins = minutesOn(d);
+    if(inMonth && mins>0){ totalMin+=mins; activeDays++; }
+    var isToday = isSameDay(d,today);
+    var cls = "cell"+(inMonth?"":" out")+(isToday?" today":"")+
+              (isSameDay(d,state.viewDate)?" sel":"");
+    cells.push(
+      '<div class="'+cls+'" data-key="'+dayKey(d)+'">'+
+        miniDial(d, isToday, isSameDay(d,state.viewDate), inMonth)+
+      '</div>'
+    );
+  }
+  document.getElementById("calGrid").innerHTML = cells.join("");
+  document.getElementById("mTotal").textContent = totalMin ? fmtDur(totalMin) : "0m.";
+  document.getElementById("mDays").textContent = activeDays;
+}
+
+function renderList(){
+  var evs=eventsFor(state.viewDate), now=new Date();
+  var live=isSameDay(state.viewDate,now), nowMin=now.getHours()*60+now.getMinutes();
+  var el=document.getElementById("list");
+  if(!evs.length){
+    el.innerHTML='<div class="empty"><b>Nothing planned</b>Tap + to add your first block to this day.</div>';
+    return;
+  }
+  el.innerHTML = evs.map(function(ev){
+    var st=hmToMin(ev.start), en=st+ev.durationMin;
+    var isNow = live && nowMin>=st && nowMin<en;
+    return '<div class="row'+(isNow?" live":"")+'" data-id="'+ev.id+'">'+
+      '<div class="badge" style="background:'+ev.color+';color:'+contrastOn(ev.color)+'">'+
+        esc(ev.label.trim().charAt(0).toUpperCase()||"?")+'</div>'+
+      '<div class="meta"><b>'+esc(ev.label)+'</b>'+
+        '<span><em>'+fmtDur(ev.durationMin)+'</em>'+esc(ev.start)+' \u2014 '+esc(minToHM(en))+'</span>'+
+        (ev.note ? '<div class="rownote">'+esc(ev.note)+'</div>' : '')+
+      '</div>'+
+      (ev.repeats ? '<div class="rep" title="Repeating">&#8635;</div>' : '')+
+      '<div class="kebab">&#8942;</div>'+
+    '</div>';
+  }).join("");
+}
+
+function renderHeader(){
+  var now=new Date();
+  // On wide screens the dial and month are both showing, so the heading
+  // names the open day and the arrows step days.
+  if(state.view==="month" && !isWide()){
+    document.getElementById("dLong").textContent =
+      state.calMonth.toLocaleDateString(undefined,{month:"long",year:"numeric"});
+    document.getElementById("dWeek").textContent = "Tap a day to open it";
+  } else {
+    var d=state.viewDate;
+    document.getElementById("dLong").textContent =
+      d.toLocaleDateString(undefined,{day:"numeric",month:"short",year:"numeric"});
+    var wk=d.toLocaleDateString(undefined,{weekday:"long"});
+    document.getElementById("dWeek").textContent = isSameDay(d,now) ? wk+" \u00b7 Today" : wk;
+  }
+}
+/* Wide screens show the dial and the month together in the left column,
+   so the day/month toggle only governs narrow layouts. */
+function isWide(){ return window.matchMedia("(min-width:1060px)").matches; }
+
+function render(){
+  var wide = isWide();
+  var m = state.view==="month";
+  // wide: both panes always on. narrow: one at a time.
+  document.getElementById("dayView").hidden   = wide ? false : m;
+  document.getElementById("monthView").hidden = wide ? false : !m;
+  document.getElementById("listHead").hidden  = !wide;
+  document.getElementById("viewBtn").hidden   = wide;
+  document.getElementById("viewBtn").classList.toggle("on", m && !wide);
+  renderHeader();
+  renderDial();
+  renderMonth();
+  renderList();
+}
+
+function svgPoint(evt){
+  var svg=document.getElementById("dial"), r=svg.getBoundingClientRect();
+  var cx=(evt.touches?evt.touches[0].clientX:evt.clientX)-r.left;
+  var cy=(evt.touches?evt.touches[0].clientY:evt.clientY)-r.top;
+  return { x: cx/r.width*400, y: cy/r.height*400 };
+}
+function pointerMin(evt){
+  var p=svgPoint(evt);
+  return angleToMin(Math.atan2(p.y-CY, p.x-CX)*180/Math.PI);
+}
+function writeOccurrence(id, key, patch){
+  var base = baseEvent(id);
+  if(!base) return;
+  var repeats = base.rule && base.rule.freq!=="none";
+  if(!repeats){
+    for(var k in patch) base[k]=patch[k];
+    return;
+  }
+  base.overrides = base.overrides || {};
+  var cur = base.overrides[key] || {};
+  for(var k2 in patch) cur[k2]=patch[k2];
+  base.overrides[key]=cur;
+}
+function onDown(e){
+  var g=e.target.closest(".sector");
+  if(!g){ state.selected=null; renderDial(); return; }
+  var id=g.dataset.id;
+  var occ=eventsFor(state.viewDate).filter(function(x){return x.id===id;})[0];
+  if(!occ) return;
+  drag = { id:id, key:dayKey(state.viewDate),
+           mode: e.target.classList.contains("handle")?e.target.dataset.mode:"move",
+           moved:false, grabOffset: circDelta(hmToMin(occ.start), pointerMin(e)) };
+  state.selected=id;
+  g.classList.add("dragging");
+  renderDial();
+  e.preventDefault();
+}
+function onMove(e){
+  if(!drag) return;
+  var occ=eventsFor(state.viewDate).filter(function(x){return x.id===drag.id;})[0];
+  if(!occ) return;
+  var m=pointerMin(e), st=hmToMin(occ.start), du=occ.durationMin;
+  if(drag.mode==="move"){
+    writeOccurrence(drag.id, drag.key, { start: minToHM(snap(m - drag.grabOffset)) });
+  } else if(drag.mode==="end"){
+    var nd=snap(circDelta(st,m));
+    if(nd<MIN_DUR) nd=MIN_DUR;
+    if(nd>DAY) nd=DAY;
+    writeOccurrence(drag.id, drag.key, { durationMin: nd });
+  } else {
+    var end=st+du, ns=snap(m), nd2=circDelta(ns,end);
+    if(nd2<MIN_DUR){ nd2=MIN_DUR; ns=end-MIN_DUR; }
+    if(nd2>DAY) nd2=DAY;
+    writeOccurrence(drag.id, drag.key, { start: minToHM(ns), durationMin: nd2 });
+  }
+  drag.moved=true;
+  renderDial();
+  e.preventDefault();
+}
+function onUp(){
+  if(!drag) return;
+  var moved=drag.moved;
+  suppressClick=moved;
+  drag=null;
+  if(moved) commit(); else renderDial();
+}
+
+function setStatus(msg,isErr){
+  var el=document.getElementById("status");
+  el.textContent=msg||"";
+  el.className="status"+(isErr?" err":"");
+}
+function gistHeaders(){
+  return { "Authorization":"Bearer "+cfg.token, "Accept":"application/vnd.github+json", "Content-Type":"application/json" };
+}
+function syncing(on,err){
+  var b=document.getElementById("syncBtn");
+  b.classList.toggle("busy",!!on);
+  b.classList.toggle("err",!!err);
+}
+function pull(){
+  if(!cfg.gistId||!cfg.token) return Promise.resolve();
+  syncing(true);
+  return fetch("https://api.github.com/gists/"+cfg.gistId,{headers:gistHeaders(),cache:"no-store"})
+    .then(function(r){ if(!r.ok) throw new Error("Gist read failed ("+r.status+")"); return r.json(); })
+    .then(function(j){
+      var f=j.files&&j.files[GIST_FILE];
+      if(!f) throw new Error("Gist has no "+GIST_FILE);
+      var data=JSON.parse(f.content||"{}");
+      if(data.events) state.events=data.events;
+      else if(data.days){
+        var out=[];
+        Object.keys(data.days).forEach(function(k){
+          (data.days[k]||[]).forEach(function(e){
+            out.push({id:e.id||uid(),label:e.label,start:e.start,durationMin:e.durationMin,
+                      color:e.color,ring:e.ring||0,rule:{freq:"none",from:k},exdates:[],overrides:{}});
+          });
+        });
+        state.events=out;
+      }
+      saveLocal(); render(); syncing(false);
+      setStatus("Synced "+new Date().toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"}));
+    })
+    .catch(function(e){ syncing(false,true); setStatus(e.message+" \u2014 using this device's copy.",true); });
+}
+function push(){
+  if(!cfg.gistId||!cfg.token) return Promise.resolve();
+  syncing(true);
+  var files={}; files[GIST_FILE]={content:JSON.stringify({v:3,events:state.events},null,2)};
+  return fetch("https://api.github.com/gists/"+cfg.gistId,{method:"PATCH",headers:gistHeaders(),body:JSON.stringify({files:files})})
+    .then(function(r){ if(!r.ok) throw new Error("Gist write failed ("+r.status+")"); syncing(false);
+      setStatus("Saved "+new Date().toLocaleTimeString(undefined,{hour:"2-digit",minute:"2-digit"}));
+    })
+    .catch(function(e){ syncing(false,true); setStatus(e.message+" \u2014 changes are saved on this device only.",true); });
+}
+var pushTimer=null;
+function commit(){ saveLocal(); render(); clearTimeout(pushTimer); pushTimer=setTimeout(push,600); }
+
+function openSheet(id){ document.getElementById(id).classList.add("open"); }
+function closeSheet(id){ document.getElementById(id).classList.remove("open"); }
+function buildSwatches(){
+  var box=document.getElementById("fColors");
+  box.innerHTML = PALETTE.map(function(c){
+    return '<button class="sw" role="radio" aria-checked="false" data-hex="'+c.hex+
+           '" style="--c:'+c.hex+'" title="'+c.name+'" aria-label="'+c.name+'"><i></i></button>';
+  }).join("");
+  box.addEventListener("click",function(e){
+    var b=e.target.closest(".sw"); if(!b) return;
+    chosenColor=b.dataset.hex; markSwatch();
+  });
+}
+function markSwatch(){
+  [].forEach.call(document.querySelectorAll("#fColors .sw"),function(b){
+    b.setAttribute("aria-checked", b.dataset.hex===chosenColor?"true":"false");
+  });
+}
+function wireTimeFields(){
+  var S=document.getElementById("fStart"), E=document.getElementById("fEnd"), D=document.getElementById("fDur");
+  function fromEnd(){
+    if(!S.value||!E.value) return;
+    var d=circDelta(hmToMin(S.value),hmToMin(E.value));
+    if(d<=0) d+=DAY;
+    D.value=d;
+  }
+  function fromDur(){
+    if(!S.value||!D.value) return;
+    E.value=minToHM(hmToMin(S.value)+(parseInt(D.value,10)||0));
+  }
+  E.addEventListener("input",fromEnd);
+  D.addEventListener("input",fromDur);
+  S.addEventListener("input",function(){ if(E.value) fromEnd(); else fromDur(); });
+}
+function setFreq(f){
+  form.freq=f;
+  [].forEach.call(document.querySelectorAll("#fFreq .chip"),function(c){
+    c.setAttribute("aria-pressed", c.dataset.f===f ? "true":"false");
+  });
+  document.getElementById("recBody").hidden = (f==="none");
+  document.getElementById("dowWrap").hidden = (f!=="weekly");
+  var unit={daily:"day(s)",weekly:"week(s)",monthly:"month(s)",yearly:"year(s)"}[f]||"";
+  document.getElementById("fEveryUnit").textContent=unit;
+  updateRecSummary();
+}
+function markDows(){
+  [].forEach.call(document.querySelectorAll("#fDows .dow"),function(b){
+    b.setAttribute("aria-pressed", form.days.indexOf(+b.dataset.d)>=0 ? "true":"false");
+  });
+}
+function readRule(){
+  var fromVal = document.getElementById("fFrom").value || dayKey(state.viewDate);
+  if(form.freq==="none") return {freq:"none", from: fromVal};
+  var r = { freq:form.freq, every: Math.max(1, parseInt(document.getElementById("fEvery").value,10)||1), from: fromVal };
+  if(form.freq==="weekly"){
+    r.days = form.days.slice().sort();
+    if(!r.days.length) r.days=[ parseKey(r.from).getDay() ];
+  }
+  var mode = document.querySelector('input[name="recEnd"]:checked').value;
+  if(mode==="count") r.count = Math.max(1, parseInt(document.getElementById("fCount").value,10)||1);
+  if(mode==="until"){
+    var u=document.getElementById("fUntil").value;
+    if(u) r.until=u;
+  }
+  return r;
+}
+function updateRecSummary(){
+  var el=document.getElementById("recSummary");
+  if(form.freq==="none"){ el.textContent=""; return; }
+  el.textContent = ruleText(readRule());
+}
+function syncEndRadios(){
+  var mode=document.querySelector('input[name="recEnd"]:checked').value;
+  document.getElementById("fCount").disabled = mode!=="count";
+  document.getElementById("fUntil").disabled = mode!=="until";
+  updateRecSummary();
+}
+function openEvent(id){
+  var base = id ? baseEvent(id) : null;
+  var key = dayKey(state.viewDate);
+  var occ = id ? eventsFor(state.viewDate).filter(function(x){return x.id===id;})[0] : null;
+
+
+  state.editing = base ? base.id : null;
+  document.getElementById("evTitle").textContent = base ? "Edit activity" : "New activity";
+  document.getElementById("evDelete").hidden = !base;
+  if(base && occ){
+    document.getElementById("fLabel").value = occ.label;
+    document.getElementById("fNote").value  = occ.note||"";
+    document.getElementById("fStart").value = occ.start;
+    document.getElementById("fEnd").value   = minToHM(hmToMin(occ.start)+occ.durationMin);
+    document.getElementById("fDur").value   = occ.durationMin;
+    document.getElementById("fRing").value  = String(occ.ring||0);
+    chosenColor = occ.color;
+    var r = base.rule || {freq:"none", from:key};
+    document.getElementById("fEvery").value = r.every||1;
+    document.getElementById("fFrom").value  = r.from||key;
+    form.days = (r.days||[]).slice();
+    document.getElementById("fCount").value = r.count||10;
+    document.getElementById("fUntil").value = r.until||"";
+    if(r.count) document.getElementById("rCount").checked=true;
+    else if(r.until) document.getElementById("rUntil").checked=true;
+    else document.getElementById("rNever").checked=true;
+    setFreq(r.freq||"none");
+  } else {
+    var n=new Date(), m=snap(n.getHours()*60+n.getMinutes());
+    document.getElementById("fLabel").value="";
+    document.getElementById("fNote").value="";
+    document.getElementById("fStart").value=minToHM(m);
+    document.getElementById("fEnd").value=minToHM(m+60);
+    document.getElementById("fDur").value=60;
+    document.getElementById("fRing").value="0";
+    document.getElementById("fEvery").value=1;
+    document.getElementById("fFrom").value=key;
+    document.getElementById("rNever").checked=true;
+    document.getElementById("fCount").value=10;
+    document.getElementById("fUntil").value="";
+    form.days=[ state.viewDate.getDay() ];
+    chosenColor = PALETTE[state.events.length % PALETTE.length].hex;
+    setFreq("none");
+  }
+  markDows(); markSwatch(); syncEndRadios();
+  openSheet("evScrim");
+  setTimeout(function(){ document.getElementById("fLabel").focus(); },60);
+}
+function saveEvent(){
+  var label=document.getElementById("fLabel").value.trim();
+  var note=document.getElementById("fNote").value.trim();
+  var start=document.getElementById("fStart").value;
+  var dur=parseInt(document.getElementById("fDur").value,10);
+  var ring=parseInt(document.getElementById("fRing").value,10)||0;
+  if(!label){ document.getElementById("fLabel").focus(); setStatus("Give the activity a name.",true); return; }
+  if(!start){ document.getElementById("fStart").focus(); setStatus("Pick a start time.",true); return; }
+  if(!dur||dur<MIN_DUR){ document.getElementById("fDur").focus(); setStatus("Duration needs to be at least 5 minutes.",true); return; }
+  if(dur>DAY) dur=DAY;
+  if(form.freq==="weekly" && !form.days.length){ setStatus("Pick at least one day of the week.",true); return; }
+  setStatus("");
+  var rule=readRule();
+  if(state.editing){
+    var base=baseEvent(state.editing);
+    base.label=label; base.note=note; base.start=start; base.durationMin=dur; base.color=chosenColor; base.ring=ring;
+    base.rule=rule;
+    base.overrides={};
+  } else {
+    state.events.push({ id:uid(), label:label, note:note, start:start, durationMin:dur,
+                        color:chosenColor, ring:ring, rule:rule, exdates:[], overrides:{} });
+  }
+  if(rule.freq!=="none" && rule.from) state.viewDate = parseKey(rule.from);
+  closeSheet("evScrim");
+  saveLocal(); render(); push();
+}
+function deleteEvent(){
+  if(!state.editing) return;
+  var base=baseEvent(state.editing);
+  if(!base) return;
+  if(base.rule && base.rule.freq!=="none"){
+    pendingScope={ id:base.id, key:dayKey(state.viewDate) };
+    document.getElementById("scopeTitle").textContent="Delete repeating activity";
+    document.getElementById("scopeMsg").textContent =
+      '"'+base.label+'" repeats. Remove it from this day only, or delete the whole series?';
+    closeSheet("evScrim");
+    openSheet("scopeScrim");
+    return;
+  }
+  state.events=state.events.filter(function(e){ return e.id!==base.id; });
+  state.selected=null;
+  closeSheet("evScrim");
+  saveLocal(); render(); push();
+}
+function applyScope(all){
+  if(!pendingScope) return;
+  var base=baseEvent(pendingScope.id);
+  if(base){
+    if(all){
+      state.events=state.events.filter(function(e){ return e.id!==base.id; });
+    } else {
+      base.exdates=base.exdates||[];
+      if(base.exdates.indexOf(pendingScope.key)<0) base.exdates.push(pendingScope.key);
+      if(base.overrides) delete base.overrides[pendingScope.key];
+    }
+  }
+  pendingScope=null; state.selected=null;
+  closeSheet("scopeScrim");
+  saveLocal(); render(); push();
+}
+
+var LS_COURSE="sectograph.editor.course";
+var currentCourse=null;
+
+function currentGist(){ return currentCourse ? currentCourse.gist : ""; }
+/* Each course's events are cached locally under its own key, so switching
+   courses is instant and offline-safe; pull() refreshes from its gist. */
+function courseDataKey(){ return "sectograph.editor.data."+(currentCourse?currentCourse.id:"none"); }
+
+function loadLocal(){
+  try{
+    var raw=localStorage.getItem(courseDataKey());
+    state.events = raw ? (JSON.parse(raw).events||[]) : [];
+  }catch(e){ state.events=[]; }
+}
+function saveLocal(){ localStorage.setItem(courseDataKey(), JSON.stringify({v:3, events:state.events})); }
+
+function buildCoursePicker(){
+  var sel=document.getElementById("coursePick");
+  sel.innerHTML=COURSES.map(function(c){ return '<option value="'+c.id+'">'+esc(c.label)+'</option>'; }).join("");
+  var saved=localStorage.getItem(LS_COURSE);
+  var start=COURSES.filter(function(c){return c.id===saved;})[0]||COURSES[0];
+  sel.value=start.id;
+  selectCourse(start.id);
+  sel.onchange=function(){ selectCourse(sel.value); };
+}
+function selectCourse(id){
+  currentCourse=COURSES.filter(function(c){return c.id===id;})[0]||COURSES[0];
+  localStorage.setItem(LS_COURSE,currentCourse.id);
+  cfg.gistId=currentCourse.gist;              // point pull/push at this course
+  state.selected=null;
+  loadLocal(); render();
+  if(cfg.gistId && cfg.token && cfg.gistId.indexOf("__")!==0) pull();
+  else setStatus(cfg.token ? "Set this course's gist id in the code." : "Add your GitHub token (gear) to save.");
+}
+
+function init(){
+  buildSwatches(); wireTimeFields(); buildCoursePicker(); render();
+  document.getElementById("viewBtn").onclick=function(){
+    state.view = state.view==="day" ? "month" : "day";
+    if(state.view==="month") state.calMonth=new Date(state.viewDate.getFullYear(), state.viewDate.getMonth(), 1);
+    render();
+  };
+  document.getElementById("prevBtn").onclick=function(){ step(-1); };
+  document.getElementById("nextBtn").onclick=function(){ step(1); };
+  function step(n){
+    // wide screens always show the dial, so the arrows move days there
+    if(state.view==="month" && !isWide()){
+      state.calMonth=addMonths(state.calMonth,n);
+    } else {
+      state.viewDate=addDays(state.viewDate,n);
+      // keep the month grid following the open day
+      state.calMonth=new Date(state.viewDate.getFullYear(), state.viewDate.getMonth(), 1);
+    }
+    state.selected=null; render();
+  }
+  // regroup panes when rotating an iPad or resizing a window
+  var mq = window.matchMedia("(min-width:1060px)");
+  var onBP = function(){ render(); };
+  if(mq.addEventListener) mq.addEventListener("change", onBP);
+  else if(mq.addListener) mq.addListener(onBP);
+  document.getElementById("todayJump").onclick=function(){
+    state.viewDate=startOfToday();
+    state.calMonth=new Date(state.viewDate.getFullYear(), state.viewDate.getMonth(), 1);
+    render();
+  };
+  document.getElementById("addBtn").onclick=function(){ openEvent(null); };
+  document.getElementById("addInline").onclick=function(){ openEvent(null); };
+  document.getElementById("syncBtn").onclick=function(){ pull(); };
+  document.getElementById("calGrid").addEventListener("click",function(e){
+    var c=e.target.closest(".cell"); if(!c) return;
+    state.viewDate=parseKey(c.dataset.key);
+    // narrow: jump to the dial. wide: it's already beside the calendar.
+    if(!isWide()) state.view="day";
+    state.selected=null;
+    render();
+  });
+  document.getElementById("fFreq").addEventListener("click",function(e){
+    var c=e.target.closest(".chip"); if(!c) return;
+    setFreq(c.dataset.f);
+  });
+  document.getElementById("fDows").addEventListener("click",function(e){
+    var b=e.target.closest(".dow"); if(!b) return;
+    var d=+b.dataset.d, i=form.days.indexOf(d);
+    if(i>=0) form.days.splice(i,1); else form.days.push(d);
+    markDows(); updateRecSummary();
+  });
+  [].forEach.call(document.querySelectorAll('input[name="recEnd"]'),function(r){
+    r.addEventListener("change", syncEndRadios);
+  });
+  ["fEvery","fCount","fUntil","fFrom"].forEach(function(id){
+    document.getElementById(id).addEventListener("input", updateRecSummary);
+  });
+  document.getElementById("evSave").onclick=saveEvent;
+  document.getElementById("evCancel").onclick=function(){ closeSheet("evScrim"); setStatus(""); };
+  document.getElementById("evDelete").onclick=deleteEvent;
+  document.getElementById("scopeOne").onclick=function(){ applyScope(false); };
+  document.getElementById("scopeAll").onclick=function(){ applyScope(true); };
+  document.getElementById("scopeCancel").onclick=function(){ pendingScope=null; closeSheet("scopeScrim"); };
+  var dial=document.getElementById("dial");
+  dial.addEventListener("mousedown",onDown);
+  dial.addEventListener("touchstart",onDown,{passive:false});
+  window.addEventListener("mousemove",onMove);
+  window.addEventListener("touchmove",onMove,{passive:false});
+  window.addEventListener("mouseup",onUp);
+  window.addEventListener("touchend",onUp);
+  dial.addEventListener("click",function(e){
+    if(suppressClick){ suppressClick=false; return; }
+    var g=e.target.closest(".sector");
+    if(g && !e.target.classList.contains("handle")) openEvent(g.dataset.id);
+  });
+  document.getElementById("list").addEventListener("click",function(e){
+    var r=e.target.closest(".row"); if(r) openEvent(r.dataset.id);
+  });
+  document.getElementById("cfgBtn").onclick=function(){
+    document.getElementById("fToken").value=cfg.token;
+    openSheet("cfgScrim");
+  };
+  document.getElementById("cfgCancel").onclick=function(){ closeSheet("cfgScrim"); };
+  document.getElementById("cfgSave").onclick=function(){
+    cfg.token=document.getElementById("fToken").value.trim();
+    localStorage.setItem(LS_TOKEN,cfg.token);
+    closeSheet("cfgScrim");
+    if(cfg.gistId && cfg.token && cfg.gistId.indexOf("__")!==0) pull();
+    else if(!cfg.token) setStatus("Token cleared — you can view but not save.");
+  };
+  [].forEach.call(document.querySelectorAll(".scrim"),function(sc){
+    sc.addEventListener("click",function(e){ if(e.target===sc) sc.classList.remove("open"); });
+  });
+  document.addEventListener("keydown",function(e){
+    if(e.key==="Escape") [].forEach.call(document.querySelectorAll(".scrim.open"),function(s){ s.classList.remove("open"); });
+    if(e.key==="Enter" && document.getElementById("evScrim").classList.contains("open") && e.target.tagName==="INPUT") saveEvent();
+    if(e.key==="ArrowLeft" && !document.querySelector(".scrim.open")) document.getElementById("prevBtn").click();
+    if(e.key==="ArrowRight" && !document.querySelector(".scrim.open")) document.getElementById("nextBtn").click();
+  });
+  setInterval(function(){
+    if(!drag && state.view==="day" && isSameDay(state.viewDate,new Date())){ renderDial(); renderList(); }
+  },15000);
+  document.addEventListener("visibilitychange",function(){ if(!document.hidden && !drag && cfg.gistId && cfg.token && cfg.gistId.indexOf("__")!==0) pull(); });
+  // selectCourse() (via buildCoursePicker) already did the first load + pull
+}
+init();
+
+/* Offline support. Only registers over http(s) — opening the file
+   directly from disk skips this without erroring. */
+if("serviceWorker" in navigator && location.protocol.indexOf("http")===0){
+  window.addEventListener("load",function(){
+    navigator.serviceWorker.register("sw.js").catch(function(){});
+  });
+}
+})();
+</script>
+</body>
+</html>
