@@ -2,7 +2,7 @@
    Caches the app shell so it opens with no signal. Gist sync still needs
    the network, but your schedule lives in localStorage and renders offline. */
 
-var CACHE = "sectograph-editor-v1";
+var CACHE = "sectograph-editor-v2";
 var SHELL = [
   "./",
   "./index.html",

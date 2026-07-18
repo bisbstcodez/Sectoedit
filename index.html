@@ -664,12 +664,20 @@ function ruleText(r){
   return s;
 }
 
-function minToAngle(m){ return (((m%DAY)+DAY)%DAY)/DAY*360 - 90; }
-function angleToMin(deg){ var m=((deg+90)/360)*DAY; return ((m%DAY)+DAY)%DAY; }
+/* ---- DIAL WINDOW: show only part of the day, enlarged ---- */
+var WIN_START=420, WIN_END=1020;         // 7:00 AM to 5:00 PM (minutes)
+var WIN_SPAN=WIN_END-WIN_START;          // 600
+/* Map a clock-minute to fraction 0..1 across the window (clamped). */
+function winFrac(m){ var f=(m-WIN_START)/WIN_SPAN; return f<0?0:(f>1?1:f); }
+/* Is this minute inside the visible window at all? */
+function inWindow(m){ return m>=WIN_START-1 && m<=WIN_END+1; }
+function minToAngle(m){ return winFrac(m)*360 - 90; }
+function angleToMin(deg){ var f=((deg+90)%360)/360; return WIN_START + f*WIN_SPAN; }
 function polar(r,deg){ var a=deg*Math.PI/180; return [CX+r*Math.cos(a), CY+r*Math.sin(a)]; }
 function sectorPath(startMin,durMin,rIn,rOut){
-  var span = Math.min(durMin, DAY-0.1)/DAY*360;
-  var a0=minToAngle(startMin), a1=a0+span, large = span>180?1:0;
+  var s0=Math.max(startMin,WIN_START), s1=Math.min(startMin+durMin,WIN_END);
+  if(s1<=s0){ s1=s0+1; }
+  var a0=minToAngle(s0), a1=minToAngle(s1), span=a1-a0, large=span>180?1:0;
   var p1=polar(rOut,a0), p2=polar(rOut,a1), p3=polar(rIn,a1), p4=polar(rIn,a0);
   return "M"+p1[0].toFixed(2)+","+p1[1].toFixed(2)+
          "A"+rOut+","+rOut+" 0 "+large+" 1 "+p2[0].toFixed(2)+","+p2[1].toFixed(2)+
@@ -677,7 +685,7 @@ function sectorPath(startMin,durMin,rIn,rOut){
          "A"+rIn+","+rIn+" 0 "+large+" 0 "+p4[0].toFixed(2)+","+p4[1].toFixed(2)+"Z";
 }
 function sectorTextTransform(s,d,r){
-  var mid=minToAngle(s+d/2), p=polar(r,mid), rot=mid+90;
+  var s0=Math.max(s,WIN_START), s1=Math.min(s+d,WIN_END), mid=minToAngle((s0+s1)/2), p=polar(r,mid), rot=mid+90;
   if(rot>90 && rot<270) rot-=180;
   return "translate("+p[0].toFixed(2)+","+p[1].toFixed(2)+") rotate("+rot.toFixed(2)+")";
 }
@@ -701,33 +709,25 @@ function renderDial(){
   var nowMin=now.getHours()*60+now.getMinutes()+now.getSeconds()/60;
   var evs=eventsFor(state.viewDate), s=[];
   s.push('<circle cx="200" cy="200" r="'+R_OUTER+'" fill="var(--bezel)" stroke="var(--bezel-edge)" stroke-width="1"/>');
-  for(var i=0;i<96;i++){
-    var ang=i*(360/96)-90;
-    var hr = i/4;                        // whole number on hour ticks
-    var isHour = (i%4===0);
-    var inner, cls;
-    if(!isHour){
-      // quarter-hour lines — unchanged
-      inner = R_TICK_IN+5; cls = "tick";
-    } else if(hr%6===0){
-      // 0, 6, 12, 18 — longest
-      inner = 152; cls = "tick major t1";
-    } else if(hr%3===0){
-      // 3, 9, 15, 21 — medium, shorter than the quarter-day marks
-      inner = 155; cls = "tick major t2";
-    } else {
-      // every other hour — current length
-      inner = R_TICK_IN; cls = "tick major";
+  // ticks every 15 min across the visible window
+  for(var tm=WIN_START; tm<=WIN_END; tm+=15){
+    var ang=minToAngle(tm), onHour=(tm%60===0), inner, cls;
+    if(!onHour){ inner = R_TICK_IN+5; cls = "tick"; }
+    else {
+      var hh=tm/60;
+      if(hh%6===0){ inner = 152; cls = "tick major t1"; }
+      else if(hh%3===0){ inner = 155; cls = "tick major t2"; }
+      else { inner = R_TICK_IN; cls = "tick major"; }
     }
-    var outR = isHour ? R_TICK_OUT+4 : R_TICK_OUT;
+    var outR = onHour ? R_TICK_OUT+4 : R_TICK_OUT;
     var o=polar(outR,ang), n=polar(inner,ang);
     s.push('<line class="'+cls+'" x1="'+o[0].toFixed(1)+'" y1="'+o[1].toFixed(1)+
            '" x2="'+n[0].toFixed(1)+'" y2="'+n[1].toFixed(1)+'"/>');
   }
-  // numerals only at the eight principal hours
-  for(var h=0;h<24;h+=3){
-    var a=h*15-90, pn=polar(R_NUM,a);
-    s.push('<text class="hournum'+(h%6===0?' q':'')+'" x="'+pn[0].toFixed(1)+'" y="'+pn[1].toFixed(1)+'">'+h+'</text>');
+  // hour numerals every 2 hours within the window (12-hour labels)
+  for(var hm=WIN_START; hm<=WIN_END; hm+=120){
+    var a=minToAngle(hm), pn=polar(R_NUM,a), hr12=((hm/60)%12)||12;
+    s.push('<text class="hournum q" x="'+pn[0].toFixed(1)+'" y="'+pn[1].toFixed(1)+'">'+hr12+'</text>');
   }
   s.push('<circle cx="200" cy="200" r="'+R_FACE+'" fill="var(--dial)"/>');
   for(var k=0;k<12;k++){
@@ -744,26 +744,30 @@ function renderDial(){
     var fg=contrastOn(ev.color), sel=state.selected===ev.id;
     s.push('<g class="sector'+(sel?" sel":"")+'" data-id="'+ev.id+'">');
     s.push('<path class="body" d="'+sectorPath(st,du,R.in,R.out)+'" fill="'+ev.color+
-           '" fill-opacity=".92" stroke="'+ev.color+'" stroke-width="1"/>');
-    var span=Math.min(du,DAY)/DAY*360, rMid=R.in+(R.out-R.in)*0.55;
-    if(span>=12 && (R.out-R.in)>=24){
-      var maxCh=Math.max(3, Math.floor(span/2.4));
-      var lbl = ev.label.length>maxCh ? ev.label.slice(0,maxCh-1)+"\u2026" : ev.label;
-      s.push('<text class="seclabel" fill="'+fg+'" text-anchor="middle" dominant-baseline="central" transform="'+
-             sectorTextTransform(st,du,rMid)+'">'+esc(lbl)+'</text>');
+           '" fill-opacity="'+(sel?"1":".92")+'" stroke="'+(sel?"#fff":ev.color)+'" stroke-width="'+(sel?"2":"1")+'"/>');
+    // Text only shows for the selected event (tap to reveal), keeping the dial clean.
+    if(sel){
+      var s0=Math.max(st,WIN_START), s1=Math.min(st+du,WIN_END), span=minToAngle(s1)-minToAngle(s0), rMid=R.in+(R.out-R.in)*0.55;
+      if(span>=12 && (R.out-R.in)>=24){
+        var maxCh=Math.max(3, Math.floor(span/2.4));
+        var lbl = ev.label.length>maxCh ? ev.label.slice(0,maxCh-1)+"\u2026" : ev.label;
+        s.push('<text class="seclabel" fill="'+fg+'" text-anchor="middle" dominant-baseline="central" transform="'+
+               sectorTextTransform(st,du,rMid)+'">'+esc(lbl)+'</text>');
+      }
+      if(span>=8){
+        s.push('<text class="sectime" fill="'+fg+'" text-anchor="start" dominant-baseline="central" transform="'+
+               edgeTextTransform(Math.max(st,WIN_START),R.in+7)+'">'+esc(ev.start)+'</text>');
+        s.push('<text class="sectime" fill="'+fg+'" text-anchor="end" dominant-baseline="central" transform="'+
+               edgeTextTransform(Math.min(st+du,WIN_END),R.out-7)+'">'+esc(minToHM(st+du))+'</text>');
+      }
     }
-    if(span>=8){
-      s.push('<text class="sectime" fill="'+fg+'" text-anchor="start" dominant-baseline="central" transform="'+
-             edgeTextTransform(st,R.in+7)+'">'+esc(ev.start)+'</text>');
-      s.push('<text class="sectime" fill="'+fg+'" text-anchor="end" dominant-baseline="central" transform="'+
-             edgeTextTransform(st+du,R.out-7)+'">'+esc(minToHM(st+du))+'</text>');
-    }
-    var hs=polar(rMid,minToAngle(st)), he=polar(rMid,minToAngle(st+du));
+    var rMid2=R.in+(R.out-R.in)*0.55;
+    var hs=polar(rMid2,minToAngle(Math.max(st,WIN_START))), he=polar(rMid2,minToAngle(Math.min(st+du,WIN_END)));
     s.push('<circle class="handle" data-mode="start" cx="'+hs[0].toFixed(1)+'" cy="'+hs[1].toFixed(1)+'" r="6"/>');
     s.push('<circle class="handle" data-mode="end" cx="'+he[0].toFixed(1)+'" cy="'+he[1].toFixed(1)+'" r="6"/>');
     s.push('</g>');
   });
-  if(showLive){
+  if(showLive && inWindow(nowMin)){
     var na=minToAngle(nowMin), tip=polar(R_FACE-4,na), tail=polar(R_HUB+2,na), dot=polar(R_FACE+12,na);
     s.push('<line class="nowhand" x1="'+tail[0].toFixed(1)+'" y1="'+tail[1].toFixed(1)+
            '" x2="'+tip[0].toFixed(1)+'" y2="'+tip[1].toFixed(1)+'"/>');
@@ -945,17 +949,19 @@ function onMove(e){
   if(!occ) return;
   var m=pointerMin(e), st=hmToMin(occ.start), du=occ.durationMin;
   if(drag.mode==="move"){
-    writeOccurrence(drag.id, drag.key, { start: minToHM(snap(m - drag.grabOffset)) });
+    var ns=snap(m - drag.grabOffset);
+    // keep the whole event inside the visible window
+    if(ns<WIN_START) ns=WIN_START;
+    if(ns+du>WIN_END) ns=WIN_END-du;
+    writeOccurrence(drag.id, drag.key, { start: minToHM(ns) });
   } else if(drag.mode==="end"){
-    var nd=snap(circDelta(st,m));
+    var endM=Math.min(snap(m),WIN_END), nd=endM-st;
     if(nd<MIN_DUR) nd=MIN_DUR;
-    if(nd>DAY) nd=DAY;
     writeOccurrence(drag.id, drag.key, { durationMin: nd });
   } else {
-    var end=st+du, ns=snap(m), nd2=circDelta(ns,end);
-    if(nd2<MIN_DUR){ nd2=MIN_DUR; ns=end-MIN_DUR; }
-    if(nd2>DAY) nd2=DAY;
-    writeOccurrence(drag.id, drag.key, { start: minToHM(ns), durationMin: nd2 });
+    var end=st+du, ns2=Math.max(snap(m),WIN_START), nd2=end-ns2;
+    if(nd2<MIN_DUR){ nd2=MIN_DUR; ns2=end-MIN_DUR; }
+    writeOccurrence(drag.id, drag.key, { start: minToHM(ns2), durationMin: nd2 });
   }
   drag.moved=true;
   renderDial();
@@ -1126,6 +1132,8 @@ function openEvent(id){
     setFreq(r.freq||"none");
   } else {
     var n=new Date(), m=snap(n.getHours()*60+n.getMinutes());
+    if(m<WIN_START) m=WIN_START;            // keep new events inside the visible window
+    if(m+60>WIN_END) m=WIN_END-60;
     document.getElementById("fLabel").value="";
     document.getElementById("fNote").value="";
     document.getElementById("fStart").value=minToHM(m);
